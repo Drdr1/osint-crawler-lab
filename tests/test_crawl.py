@@ -15,6 +15,7 @@ from sqlalchemy import select
 from conftest import Rig, build_worker
 from crawler import store
 from crawler.models import domain_state, pages
+from crawler.queue import DLQ, FRONTIER
 
 
 async def outcomes(rig: Rig, crawl_id: uuid.UUID) -> dict[str, dict[str, Any]]:
@@ -173,3 +174,16 @@ async def test_parked_domain_survives_a_worker_restart(rig: Rig) -> None:
     finally:
         await fresh.http.close()
         await fresh.browser.close()
+
+
+async def test_malformed_message_goes_to_dead_letter_and_partition_keeps_moving(rig: Rig) -> None:
+    await rig.producer.send(FRONTIER, rig.site.main_host, {"url": "no crawl id here"})
+    crawl_id = await rig.start(max_depth=0, max_pages=1)
+    await rig.worker.run_until_idle(deadline=30)
+    assert rig.worker.stats.outcomes["dead_lettered"] == 1
+    broker = rig.producer.broker
+    dead = [m for (topic, _), log in broker.log.items() if topic == DLQ for m in log]
+    assert len(dead) == 1 and "KeyError" in dead[0].value["reason"]
+    async with rig.sm() as session:
+        summary = await store.crawl_summary(session, crawl_id)
+    assert summary["outcomes"] == {"ok": 1}  # the real message behind it was still processed

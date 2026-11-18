@@ -79,19 +79,26 @@ Each case is asserted in `tests/test_crawl.py` against the hostile site.
 | Crash before the offset commit | Redelivered URLs are acknowledged without a second fetch | No duplicate rows, and the request count is unchanged |
 | Page budget | Hard cap, enforced in the database | Exactly `max_pages` URLs enqueued |
 | Worker restart | A parked domain stays parked | A fresh worker defers instead of fetching |
+| Malformed message in the frontier | Sent to `crawl.dlq` with the reason; the partition keeps moving | The real message behind it is still crawled |
 
 `tests/test_kafka.py` runs on a real broker in CI. It shows that same-key
 messages stay in order, that uncommitted messages are redelivered to a new
 consumer, and that a full crawl works through Kafka.
 
-### A bug the tests caught
+### Two bugs the tests caught
 
-The first version let httpx follow redirects automatically. The pacing
+First, the initial version let httpx follow redirects automatically. The pacing
 assertion failed: a redirect loop hit the site six times in about 10 ms,
 because each hop is a real request that skips the politeness gate.
 Redirects are now followed by hand, with a pause between hops. Loops stop
 at the first repeated URL, and redirects to another domain go back to the
 frontier, where scope rules and that domain's pacing apply.
+
+Second, on the real Kafka broker in CI, the crawl test read leftover
+messages from an earlier test that had no `crawl_id`. The worker crashed
+on them, so one bad message could have stopped its partition for good.
+Malformed messages now go to a dead-letter topic with the reason, and
+processing continues.
 
 ## Anti-bot stance
 

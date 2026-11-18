@@ -30,7 +30,7 @@ from crawler.extract import parse, trap_reason
 from crawler.fetch import BrowserFetcher, FetchResult, HttpFetcher
 from crawler.identity import IdentityPool
 from crawler.politeness import Politeness
-from crawler.queue import Consumer, Message, Producer
+from crawler.queue import DLQ, Consumer, Message, Producer
 from crawler.robots import RobotsCache
 from crawler.urls import domain_of, in_scope, normalize, url_hash
 
@@ -112,7 +112,23 @@ class Worker:
     async def _domain_batch(self, batch: list[Message]) -> None:
         async with self._sem:
             for m in batch:  # sequential within a domain: politeness is per domain
-                outcome = await self.process(m.value)
+                try:
+                    outcome = await self.process(m.value)
+                except (KeyError, TypeError, ValueError) as exc:
+                    # A malformed message must not wedge its partition forever:
+                    # park it on the dead-letter topic with the reason, move on.
+                    await self.producer.send(
+                        DLQ,
+                        m.key,
+                        {
+                            "reason": f"malformed: {type(exc).__name__}: {exc}"[:500],
+                            "topic": m.topic,
+                            "partition": m.partition,
+                            "offset": m.offset,
+                            "value": m.value,
+                        },
+                    )
+                    outcome = "dead_lettered"
                 self.stats.outcomes[outcome] += 1
 
     # -- one URL -------------------------------------------------------------
