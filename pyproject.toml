@@ -1,0 +1,36 @@
+[project]
+name = "osint-crawler-lab"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "BLE", "S", "SIM", "RUF"]
+ignore = ["S101", "ASYNC109"]  # poll(timeout=) mirrors the Kafka consumer API
+
+[tool.ruff.lint.isort]
+known-first-party = ["crawler", "target_site"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S104", "S105", "S106", "S311", "ASYNC110", "ASYNC230", "E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["crawler"]
+
+[[tool.mypy.overrides]]
+module = ["aiokafka", "aiokafka.*", "aioboto3", "aioboto3.*", "botocore.*", "playwright.*"]
+ignore_missing_imports = true
